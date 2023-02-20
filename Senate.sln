@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Senate.Portal", "Senate.Por
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Senate.Api", "Senate.Api\Senate.Api.csproj", "{FD214554-547F-4ACE-886E-2346A93FAB7C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Senate.Infra", "Senate.Infra\Senate.Infra.csproj", "{75C1F9E9-35A3-4059-AB37-0B828DBA8794}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{FD214554-547F-4ACE-886E-2346A93FAB7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FD214554-547F-4ACE-886E-2346A93FAB7C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FD214554-547F-4ACE-886E-2346A93FAB7C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{75C1F9E9-35A3-4059-AB37-0B828DBA8794}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{75C1F9E9-35A3-4059-AB37-0B828DBA8794}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{75C1F9E9-35A3-4059-AB37-0B828DBA8794}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{75C1F9E9-35A3-4059-AB37-0B828DBA8794}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

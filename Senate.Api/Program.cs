@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
+using Senate.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 var localHostCors = "localHostAccess";
@@ -10,7 +11,11 @@ var productionCors = "productionAccess";
 // Add services to the container.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAdB2C"));
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(o =>
+{
+    o.AddPolicy("ReadScope",
+        p => p.Requirements.Add(new ScopesRequirement(builder.Configuration["ReadScope"])));
+});
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -40,8 +45,6 @@ builder.Services.AddCors(o =>
 });
 
 var app = builder.Build();
-app.UseAuthentication();
-app.UseAuthorization();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -52,8 +55,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 
-var scopeRequiredByApi = new string[] { "read", "write" }; //app.Configuration.GetSection("AzureAdB2C").GetValue<string[]>("Scopes") ?? Array.Empty<string>(); 
+var scopeRequiredByApi = new string[] { "Auth.Read", "Auth.Write" }; //app.Configuration.GetSection("AzureAdB2C").GetValue<string[]>("Scopes") ?? Array.Empty<string>(); 
 var summaries = new[]
 {
     "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
@@ -76,6 +81,8 @@ app.MapGet("/weatherforecast", (HttpContext httpContext) =>
 .WithName("GetWeatherForecast")
 .WithOpenApi()
 .RequireAuthorization();
+
+app.MapAuthModule("/auth");
 
 app.Run();
 

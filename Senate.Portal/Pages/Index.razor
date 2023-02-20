@@ -1,62 +1,41 @@
 ﻿@page "/"
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json;
-@inject IHttpClientFactory ClientFactory
+@inject IHttpClientFactory _clientFactory 
 
 <PageTitle>Index</PageTitle>
 
 Welcome to your new app.
 
-<h1>Weather forecast</h1>
+<h1>Invite a user</h1>
 
-<p>This component demonstrates fetching data from the server.</p>
-
-@if (forecasts == null)
-{
-    <p><em>Loading...</em></p>
-}
-else
-{
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>Temp. (C)</th>
-                <th>Temp. (F)</th>
-                <th>Summary</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var forecast in forecasts)
-            {
-                <tr>
-                    <td>@forecast.Date.ToShortDateString()</td>
-                    <td>@forecast.TemperatureC</td>
-                    <td>@forecast.TemperatureF</td>
-                    <td>@forecast.Summary</td>
-                </tr>
-            }
-        </tbody>
-    </table>
-}
+<InputText id="email" @bind-Value="inviteUserModel.Email"/>
+<button @onclick="HandleSubmit">Invite User</button>
 
 @code {
-    private WeatherForecast[]? forecasts;
+    private InviteUserModel inviteUserModel = new();
 
-    protected override async Task OnInitializedAsync()
+    private HttpClient? _client = null;
+
+    private string inviteEmail = string.Empty;
+
+    private async Task HandleSubmit()
     {
         try
         {
-            var client = ClientFactory.CreateClient("SenateAPI");
-            var response = await client.GetAsync($"{client.BaseAddress}weatherforecast");
-            var ser = JsonSerializer.Deserialize<WeatherForecast[]>(response.Content.ReadAsStream());
-
-            forecasts = ser;
+            var response = await _client!.PostAsync($"{_client.BaseAddress}auth/user?email={inviteUserModel.Email}", null);
+            Console.WriteLine("Hey");
         }
         catch (AccessTokenNotAvailableException ex)
         {
             ex.Redirect();
         }
+    }
+
+    protected override Task OnInitializedAsync()
+    {
+        _client = _clientFactory.CreateClient("SenateAPI");
+        return Task.CompletedTask;
     }
 
     public class WeatherForecast

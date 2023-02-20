@@ -1,0 +1,3 @@
+name: Senate.Infra
+runtime: dotnet
+description: Senate's Azure infra as code
