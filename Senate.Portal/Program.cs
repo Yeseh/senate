@@ -20,9 +20,18 @@ builder.Services.AddMsalAuthentication(options =>
 
 builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
 
-builder.Services.AddHttpClient(
-    "SenateAPI",  client => client.BaseAddress = new Uri("https://localhost:8001"))
-    .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+if (builder.HostEnvironment.IsDevelopment())
+{
+    builder.Services.AddHttpClient(
+        "SenateAPI",  client => client.BaseAddress = new Uri("https://localhost:8001"))
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+}
+else
+{
+    builder.Services.AddHttpClient(
+        "SenateAPI",  client => client.BaseAddress = new Uri("https://app-senate-api.azurewebsites.net"))
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+}
 
 builder.Services.AddScoped(
     sp => sp.GetRequiredService<IHttpClientFactory>()

@@ -9,7 +9,7 @@ public class CustomAuthorizationMessageHandler : AuthorizationMessageHandler
         NavigationManager navigationManager)
         : base(provider, navigationManager)
     {
-        ConfigureHandler(authorizedUrls: new[] { "https://localhost:8001" });
+        ConfigureHandler(authorizedUrls: new[] { "https://localhost:8001", "https://app-senate-api.azurewebsites.net" });
     }
 }
 

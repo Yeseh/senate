@@ -35,8 +35,7 @@ builder.Services.AddCors(o =>
         o.AddPolicy(productionCors, b =>
         {
             var allowedOrigins = builder.Configuration
-                .GetSection("Cors")
-                .GetValue<string[]>("allowedOrigins");
+                .GetValue<string[]>("AllowedHosts");
 
             b.AllowAnyMethod().AllowAnyHeader();
             b.WithOrigins(allowedOrigins ?? Array.Empty<string>());
@@ -50,10 +49,14 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.UseCors(localHostCors);
-    app.UseSwagger();
-    app.UseSwaggerUI();
+}
+else
+{
+    app.UseCors(productionCors);
 }
 
+app.UseSwagger();
+app.UseSwaggerUI();
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
