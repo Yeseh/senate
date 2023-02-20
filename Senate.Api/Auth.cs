@@ -1,13 +1,27 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.Identity.Web.Resource;
-using System.ComponentModel.DataAnnotations;
-using System.Security.Cryptography;
+using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Linq;
+using Microsoft.Graph;
+using Newtonsoft.Json;
 
 namespace Senate.Api;
 
 public record User(Guid ObjectId, string Email, bool IsEmailVerified = false, bool IsInviteAccepted = false);
 
-public record Invite(Guid Id, string Email, DateTime Expiry, bool Redeemed = false);
+public record Invite
+{
+    [JsonProperty(PropertyName = "id")]
+    public Guid Id { get; set; }
+
+    [JsonProperty(PropertyName = "email")]
+    public string Email { get; set; } = string.Empty;
+
+    [JsonProperty(PropertyName = "expiry")]
+    public DateTime Expiry { get; set; }
+
+    [JsonProperty(PropertyName = "redeemed")]
+    public bool Redeemed { get; set; } = false;
+}
 
 public class CreateUserResponse
 {
@@ -24,12 +38,17 @@ public static class Auth
 
     private readonly static Dictionary<Guid, Invite> inviteDb = new();
 
-    public static void MapAuthModule(this WebApplication app, string basePath)
+    public static void MapAuthModule(this Microsoft.AspNetCore.Builder.WebApplication app, string basePath)
     {
+        // User
         app.MapPost(basePath + "/user", CreateUser).WithOpenApi().RequireAuthorization();
         app.MapGet(basePath + "/user/{oid}", GetUserByOid).WithOpenApi().RequireAuthorization();
-        app.MapGet(basePath + "/invite/{id}", GetInvite).WithOpenApi().RequireAuthorization();
-        app.MapPut(basePath + "/invite/{id}", RedeemInvite).WithOpenApi().RequireAuthorization();
+        app.MapPut(basePath + "/user/{oid}", GetUserByOid).WithOpenApi().RequireAuthorization();
+
+        // Invites
+        app.MapGet(basePath + "/invites", GetInvites).WithOpenApi().RequireAuthorization();
+        app.MapGet(basePath + "/invites/{id}", GetInvite).WithOpenApi().RequireAuthorization();
+        app.MapPut(basePath + "/invites/{id}", RedeemInvite).WithOpenApi().RequireAuthorization();
     }
 
     private static IResult GetUserByOid([FromRoute] Guid oid, HttpContext ctx)
@@ -40,46 +59,82 @@ public static class Auth
         return Results.Ok(user);
     }
 
-    private static IResult GetInvite(Guid inviteId, HttpContext ctx)
+    private static async Task<IResult> GetInvites(HttpContext ctx, CosmosClient _cosmos)
     {
-        var now = DateTime.UtcNow;
-        var invites = inviteDb.Where(
-            pair => pair.Key.Equals(inviteId) 
-                && pair.Value.Expiry > now 
-                && !pair.Value.Redeemed);
+        var container = _cosmos.GetContainer("Senate", "Invites");
+        var query = new QueryDefinition("select * from c where c.redeemed = false");
+        var result = container.GetItemQueryIterator<Invite>(query);
 
-        if (!invites.Any()) { return Results.NotFound(); }
+        List<Invite> toReturn = new();
+        while (result.HasMoreResults)
+        {
+            var items = await result.ReadNextAsync();
+            foreach (var i in items)
+            {
+                toReturn.Add(i);
+            }
+        }
 
-        return Results.Ok(invites.First().Value);
+        return Results.Ok(toReturn);
     }
 
-    private static IResult RedeemInvite(Guid inviteId, HttpContext ctx)
+    private static IResult GetInvite(Guid inviteId, HttpContext ctx, CosmosClient _cosmos)
     {
         var now = DateTime.UtcNow;
-        var invites = inviteDb.Where(
-            pair => pair.Key.Equals(inviteId) 
-                && pair.Value.Expiry > now 
-                && !pair.Value.Redeemed);
+        var container = _cosmos.GetContainer("Senate", "Invites");
+        var invites = container.GetItemLinqQueryable<Invite>()
+            .Where(i => i.Id == inviteId
+                && i.Expiry > now
+                && !i.Redeemed);
 
         if (!invites.Any()) { return Results.NotFound(); }
 
-        var existing = invites.First().Value;
-        var updated = new Invite(existing.Id, existing.Email, existing.Expiry, true);
-        inviteDb[existing.Id]= updated;
+        return Results.Ok(invites.First());
+    }
+
+    private static async Task<IResult> RedeemInvite(Guid inviteId, HttpContext ctx, CosmosClient _cosmos)
+    {
+        var now = DateTime.UtcNow;
+        var container = _cosmos.GetContainer("Senate", "Invites");
+        var invites = container.GetItemLinqQueryable<Invite>().Where(
+            i => i.Id.Equals(inviteId) 
+                && i.Expiry > now 
+                && !i.Redeemed);
+
+        if (!invites.Any()) { return Results.NotFound(); }
+
+        var existing = invites.First();
+        var updated = new Invite()
+        {
+            Id = existing.Id,
+            Email = existing.Email,
+            Expiry = existing.Expiry,
+            Redeemed = true,
+        };
+        var updateRes = await container.UpsertItemAsync(updated);
+        if (updateRes.StatusCode != System.Net.HttpStatusCode.OK) { return Results.BadRequest(); }
 
         return Results.Ok();
     }
 
-    private static IResult CreateUser(string email, HttpContext ctx)
+    private static async Task<IResult> CreateUser(string email, HttpContext ctx, CosmosClient _cosmos)
     {
         User newUser = new(Guid.NewGuid(), email);
 
         var success = userDb.TryAdd(newUser.ObjectId, newUser);
         if (!success) { return Results.BadRequest(); }
 
-        Invite invite = new(Guid.NewGuid(), email, DateTime.UtcNow.AddHours(48));
-        success = inviteDb.TryAdd(invite.Id, invite);
-        if (!success) { return Results.BadRequest(); }
+        Invite invite = new()
+        {
+            Id = Guid.NewGuid(),
+            Email = email,
+            Expiry = DateTime.UtcNow.AddHours(48),
+            Redeemed = false
+        };
+
+        var container = _cosmos.GetContainer("Senate", "Invites");
+        var inviteRes = await container.CreateItemAsync(invite);
+        if (inviteRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest(); }   
 
         var returnUri = $"/user/{newUser.ObjectId}";
 
@@ -87,7 +142,7 @@ public static class Auth
         var res = new CreateUserResponse()
         {
             User = newUser,
-            Invite = invite,
+            Invite = inviteRes.Resource,
             InviteUrl = inviteRedeemUrl
         };
 

@@ -11,31 +11,67 @@ Welcome to your new app.
 
 <InputText id="email" @bind-Value="inviteUserModel.Email"/>
 <button @onclick="HandleSubmit">Invite User</button>
+<h2>@inviteMessage</h2>
+
+<h1>Active Invites</h1>
+<table class="table">
+    <thead>
+        <tr>Id</tr>
+        <tr>Email</tr>
+        <tr>Expiry</tr>
+        <tr>Redeemed</tr>
+    </thead>
+    <tbody>
+        @foreach (var item in activeInvites)
+        {
+            <tr>@item.Id</tr>
+            <tr>@item.Email</tr>
+            <tr>@item.Expiry</tr>
+            <tr>@item.Redeemed</tr>
+        }
+    </tbody>
+</table>
 
 @code {
     private InviteUserModel inviteUserModel = new();
 
+    private List<InviteModel> activeInvites = new();
+
     private HttpClient? _client = null;
 
-    private string inviteEmail = string.Empty;
+    private string inviteMessage = string.Empty;
 
     private async Task HandleSubmit()
     {
         try
         {
             var response = await _client!.PostAsync($"{_client.BaseAddress}auth/user?email={inviteUserModel.Email}", null);
-            Console.WriteLine("Hey");
+            inviteMessage = "Succeeded";
         }
         catch (AccessTokenNotAvailableException ex)
         {
+            inviteMessage = "Error";
             ex.Redirect();
         }
     }
 
-    protected override Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync()
     {
-        _client = _clientFactory.CreateClient("SenateAPI");
-        return Task.CompletedTask;
+        try
+        {
+            _client = _clientFactory.CreateClient("SenateAPI");
+            var invitesResult = await _client!.GetAsync($"{_client.BaseAddress}auth/invites");
+
+            if (invitesResult.IsSuccessStatusCode)
+            {
+                activeInvites = JsonSerializer.Deserialize<List<InviteModel>>(invitesResult.Content.ReadAsStream());
+            }
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            inviteMessage = "Error";
+            ex.Redirect();
+        }
     }
 
     public class WeatherForecast

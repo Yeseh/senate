@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
+using Microsoft.Azure.Cosmos;
 using Senate.Api;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,12 @@ builder.Services.AddAuthorization(o =>
 {
     o.AddPolicy("ReadScope",
         p => p.Requirements.Add(new ScopesRequirement(builder.Configuration["ReadScope"])));
+});
+
+builder.Services.AddSingleton(s =>
+{
+    var connString = builder.Configuration.GetValue<string>("ConnectionStrings:CosmosDB");
+    return new CosmosClient(connString);
 });
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -86,6 +93,9 @@ app.MapGet("/weatherforecast", (HttpContext httpContext) =>
 .RequireAuthorization();
 
 app.MapAuthModule("/auth");
+
+var cosmosdb = app.Services.GetRequiredService<CosmosClient>();
+await cosmosdb.CreateDatabaseIfNotExistsAsync("Senate");
 
 app.Run();
 
