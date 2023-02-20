@@ -19,7 +19,7 @@ jobs:
       with:
         dotnet-version: ${{ env.DOTNET_CORE_VERSION }}
     - name: Restore Workloads
-      run: dotnet workload restore
+      run: dotnet workload restore --project "${{ env.WORKING_DIRECTORY }}/Senate.Portal.csproj"
     - name: Restore
       run: dotnet restore "${{ env.WORKING_DIRECTORY }}"
     - name: Build
