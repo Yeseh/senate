@@ -1,21 +1,37 @@
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Builder; 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.Resource;
 using Microsoft.Azure.Cosmos;
 using Senate.Api;
+using Azure.Identity;
+using Microsoft.Graph;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder(args);
 var localHostCors = "localHostAccess";
 var productionCors = "productionAccess";
+var b2cSection = builder.Configuration.GetSection("AzureAdB2C");
 
 // Add services to the container.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAdB2C"));
+    .AddMicrosoftIdentityWebApi(b2cSection);
+
 builder.Services.AddAuthorization(o =>
 {
     o.AddPolicy("ReadScope",
         p => p.Requirements.Add(new ScopesRequirement(builder.Configuration["ReadScope"])));
+});
+
+builder.Services.AddSingleton(s =>
+{
+    var scopes = new[] { "https://graph.microsoft.com/.default" };
+    var cred = new ClientSecretCredential(
+        b2cSection["TenantId"],
+        b2cSection["ClientId"],
+        b2cSection["ClientSecret"]);
+
+    return new GraphServiceClient(cred, scopes);
 });
 
 builder.Services.AddSingleton(s =>

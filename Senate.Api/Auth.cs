@@ -6,8 +6,6 @@ using Newtonsoft.Json;
 
 namespace Senate.Api;
 
-public record User(Guid ObjectId, string Email, bool IsEmailVerified = false, bool IsInviteAccepted = false);
-
 public record Invite
 {
     [JsonProperty(PropertyName = "id")]
@@ -23,18 +21,29 @@ public record Invite
     public bool Redeemed { get; set; } = false;
 }
 
+public record UserAuth
+{
+    [JsonProperty(PropertyName = "id")]
+    public Guid ObjectId { get; set; }
+
+    [JsonProperty(PropertyName = "scopes")]
+    public List<string> Scopes { get; set; } = new();
+}
+
 public class CreateUserResponse
 {
-    public User User { get; set;  }
+    public Microsoft.Graph.User User { get; set;  }
 
     public Invite Invite { get; set; }
+
+    public UserAuth UserAuth { get; set; }
 
     public string InviteUrl { get; set; }
 }
 
 public static class Auth
 {
-    private readonly static Dictionary<Guid, User> userDb = new();
+    private readonly static Dictionary<Guid, Microsoft.Graph.User> userDb = new();
 
     private readonly static Dictionary<Guid, Invite> inviteDb = new();
 
@@ -117,12 +126,30 @@ public static class Auth
         return Results.Ok();
     }
 
-    private static async Task<IResult> CreateUser(string email, HttpContext ctx, CosmosClient _cosmos)
+    private static async Task<IResult> CreateUser(
+        string email, 
+        string permission, 
+        HttpContext ctx, 
+        CosmosClient _cosmos,
+        GraphServiceClient _graph)
     {
-        User newUser = new(Guid.NewGuid(), email);
+        var scopes = new List<string>();
+        if (permission.Contains("read")) {  scopes.Add("Auth.Read"); }
+        if (permission.Contains("write")) {  scopes.Add("Auth.Write"); }
 
-        var success = userDb.TryAdd(newUser.ObjectId, newUser);
-        if (!success) { return Results.BadRequest(); }
+        // Create user for supplied email address in B2C
+        var user = await GraphUserService.CreateUser(email, _graph);
+        if (user is null) { return Results.BadRequest("Failed to create graph user"); }   
+
+        var authContainer = _cosmos.GetContainer("Senate", "Auth");
+        var userAuth = new UserAuth()
+        {
+            ObjectId = Guid.Parse(user.Id),
+            Scopes = scopes
+        };
+
+        var userAuthRes = await authContainer.CreateItemAsync(userAuth);
+        if (userAuthRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest("Failed to create user auth record"); }
 
         Invite invite = new()
         {
@@ -134,14 +161,15 @@ public static class Auth
 
         var container = _cosmos.GetContainer("Senate", "Invites");
         var inviteRes = await container.CreateItemAsync(invite);
-        if (inviteRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest(); }   
+        if (inviteRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest("Failed to create invite"); }   
 
-        var returnUri = $"/user/{newUser.ObjectId}";
+        var returnUri = $"/user/{user.Id}";
 
         var inviteRedeemUrl = $"https://yesehdevb2c.b2clogin.com/yesehdevb2c.onmicrosoft.com/oauth2/v2.0/authorize?p=B2C_1A_MAGICLINKSISU&client_id=bf050912-36cc-4ff6-9166-dad0068cea4e&nonce=defaultNonce&redirect_uri=https%3A%2F%2Fjwt.ms&scope=openid&response_type=id_token&prompt=login&invite_id={invite.Id}";
         var res = new CreateUserResponse()
         {
-            User = newUser,
+            User = user,
+            UserAuth = userAuthRes.Resource,
             Invite = inviteRes.Resource,
             InviteUrl = inviteRedeemUrl
         };

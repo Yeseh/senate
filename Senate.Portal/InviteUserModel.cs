@@ -5,6 +5,8 @@ namespace Senate.Portal;
 public class InviteUserModel
 {
     public string Email { get; set; }
+
+    public string Permission { get; set; } = "read";
 }
 
 public record InviteModel

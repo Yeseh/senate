@@ -11,26 +11,31 @@ Welcome to your new app.
 
 <InputText id="email" @bind-Value="inviteUserModel.Email"/>
 <button @onclick="HandleSubmit">Invite User</button>
+<select @bind="inviteUserModel.Permission">
+    @foreach (var p in permissions)
+    {
+        <option value=@p>@p</option>
+    }
+</select>
 <h2>@inviteMessage</h2>
 
 <h1>Active Invites</h1>
-<table class="table">
-    <thead>
-        <tr>Id</tr>
-        <tr>Email</tr>
-        <tr>Expiry</tr>
-        <tr>Redeemed</tr>
-    </thead>
-    <tbody>
-        @foreach (var item in activeInvites)
-        {
-            <tr>@item.Id</tr>
-            <tr>@item.Email</tr>
-            <tr>@item.Expiry</tr>
-            <tr>@item.Redeemed</tr>
-        }
-    </tbody>
-</table>
+<TableTemplate Items="activeInvites" Context="invite">
+    <TableHeader>
+        <th>Id</th>
+        <th>Email</th>
+        <th>Expiry</th>
+        <th>Redeemed</th>
+    </TableHeader>
+    <RowTemplate>
+            <td>@invite.Id</td>
+            <td>@invite.Email</td>
+            <td>@invite.Expiry</td>
+            <td>@invite.Redeemed</td>
+    </RowTemplate>
+</TableTemplate>
+
+
 
 @code {
     private InviteUserModel inviteUserModel = new();
@@ -39,14 +44,16 @@ Welcome to your new app.
 
     private HttpClient? _client = null;
 
+    private string[] permissions = new string[] { "read", "write", "read write" };
+
     private string inviteMessage = string.Empty;
 
     private async Task HandleSubmit()
     {
         try
         {
-            var response = await _client!.PostAsync($"{_client.BaseAddress}auth/user?email={inviteUserModel.Email}", null);
-            inviteMessage = "Succeeded";
+            var response = await _client!.PostAsync($"{_client.BaseAddress}auth/user?email={inviteUserModel.Email}&permission={inviteUserModel.Permission}", null);
+            inviteMessage = response.Content.ToString();
         }
         catch (AccessTokenNotAvailableException ex)
         {
