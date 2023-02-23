@@ -3,23 +3,17 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Graph;
 using Newtonsoft.Json;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Policy;
+using System.Web;
+using LanguageExt;
+using LanguageExt.Common;
+using LanguageExt.Pipes;
 
 namespace Senate.Api;
 
-public record Invite
-{
-    [JsonProperty(PropertyName = "id")]
-    public Guid Id { get; set; }
-
-    [JsonProperty(PropertyName = "email")]
-    public string Email { get; set; } = string.Empty;
-
-    [JsonProperty(PropertyName = "expiry")]
-    public DateTime Expiry { get; set; }
-
-    [JsonProperty(PropertyName = "redeemed")]
-    public bool Redeemed { get; set; } = false;
-}
+using static LanguageExt.Prelude;
 
 public record UserAuth
 {
@@ -34,8 +28,6 @@ public class CreateUserResponse
 {
     public Microsoft.Graph.User User { get; set;  }
 
-    public Invite Invite { get; set; }
-
     public UserAuth UserAuth { get; set; }
 
     public string InviteUrl { get; set; }
@@ -45,19 +37,81 @@ public static class Auth
 {
     private readonly static Dictionary<Guid, Microsoft.Graph.User> userDb = new();
 
-    private readonly static Dictionary<Guid, Invite> inviteDb = new();
-
     public static void MapAuthModule(this Microsoft.AspNetCore.Builder.WebApplication app, string basePath)
     {
         // User
         app.MapPost(basePath + "/user", CreateUser).WithOpenApi().RequireAuthorization();
         app.MapGet(basePath + "/user/{oid}", GetUserByOid).WithOpenApi().RequireAuthorization();
-        app.MapPut(basePath + "/user/{oid}", GetUserByOid).WithOpenApi().RequireAuthorization();
+        app.MapGet(basePath + "/user/{oid}/auth", GetUserAuth).WithOpenApi().RequireAuthorization();
 
         // Invites
-        app.MapGet(basePath + "/invites", GetInvites).WithOpenApi().RequireAuthorization();
-        app.MapGet(basePath + "/invites/{id}", GetInvite).WithOpenApi().RequireAuthorization();
-        app.MapPut(basePath + "/invites/{id}", RedeemInvite).WithOpenApi().RequireAuthorization();
+        //app.MapGet(basePath + "/invite", CreateInviteLink).WithOpenApi();
+        app.MapGet(basePath + "/invite", RedeemInviteLink).WithOpenApi();
+    }
+
+    private static IResult RedeemInviteLink(
+        string token, 
+        string email, 
+        IConfiguration _config, 
+        HttpContext context)
+    {
+        var b2cSection = _config.GetSection("AzureAdB2C");
+
+        var nonce = Guid.NewGuid().ToString("n");
+        var tenantName = b2cSection["Domain"];
+        var clientId = b2cSection["ClientId"];
+        var hostName = b2cSection["Instance"]!.Split("https://")[1];
+        
+        var redirectUri = HttpUtility.UrlEncode("https://jwt.ms");
+        var redeemUrl = string.Format("https://{0}/{1}/B2C_1A_RedeemInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
+            + "&redirect_uri={4}&scope=openid&response_type=id_token&disable_cache=true&id_token_hint={5}"
+            , hostName, tenantName, clientId, nonce, redirectUri, token);
+
+        Console.WriteLine("Redeem: " + redeemUrl);
+
+        return Results.Redirect(redeemUrl, true);
+    }
+
+    private static async Task<string> CreateInviteLink(
+        string email,
+        HttpRequest req,
+        IConfiguration _config,
+        HttpContext context)
+    {
+        var b2cSection = _config.GetSection("AzureAdB2C");
+
+        var nonce = Guid.NewGuid().ToString("n");
+        var tenantName = b2cSection["Domain"];
+        var clientId = b2cSection["ClientId"];
+        var hostName = b2cSection["Instance"]!.Split("https://")[1];
+        var redirectUri = HttpUtility.UrlEncode("https://jwt.ms");
+        var ex = new Exception("Failed to create invite token");
+
+        string genUrl = string.Format("https://{0}/{1}/B2C_1A_GenerateInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
+             + "&redirect_uri={4}&scope=openid&response_type=id_token&disable_cache=true&login_hint={5}"
+              , hostName, tenantName, clientId, nonce, redirectUri, email);
+
+        Console.WriteLine("Redirect: " + genUrl);
+        HttpClientHandler handler = new();
+        handler.AllowAutoRedirect = false;
+
+        using HttpClient client = new(handler);
+        var res = await client.GetAsync(genUrl);
+
+        if (res.StatusCode != HttpStatusCode.Redirect) { throw ex; }
+
+        var contents = res.Content.ReadAsStringAsync();
+        var location = res.Headers.Location.ToString();
+        var expectedRedirect = "https://jwt.ms/#id_token=";
+        var isExpectedRedirect = location.StartsWith(expectedRedirect);
+
+        if (!isExpectedRedirect) { throw ex; }
+
+        var token = location.Substring(expectedRedirect.Length);
+        var inviteUrl = $"{req.Scheme}://{req.Host}{req.PathBase.Value}/auth/invite?token={token}&email={email}";
+        Console.WriteLine("Invite: " + inviteUrl);
+
+        return inviteUrl;
     }
 
     private static IResult GetUserByOid([FromRoute] Guid oid, HttpContext ctx)
@@ -68,78 +122,38 @@ public static class Auth
         return Results.Ok(user);
     }
 
-    private static async Task<IResult> GetInvites(HttpContext ctx, CosmosClient _cosmos)
+    private static IResult GetUserAuth(
+        [FromRoute] Guid oid, 
+        HttpContext ctx,
+        CosmosClient _cosmos)
     {
-        var container = _cosmos.GetContainer("Senate", "Invites");
-        var query = new QueryDefinition("select * from c where c.redeemed = false");
-        var result = container.GetItemQueryIterator<Invite>(query);
+        var container = _cosmos.GetContainer("Senate", "Auth");
+        var result = container.GetItemLinqQueryable<UserAuth>()
+            .Where(u => u.ObjectId == oid)
+            .FirstOrDefault();
 
-        List<Invite> toReturn = new();
-        while (result.HasMoreResults)
-        {
-            var items = await result.ReadNextAsync();
-            foreach (var i in items)
-            {
-                toReturn.Add(i);
-            }
-        }
+        if (result is null) { return Results.NotFound(); }
 
-        return Results.Ok(toReturn);
-    }
-
-    private static IResult GetInvite(Guid inviteId, HttpContext ctx, CosmosClient _cosmos)
-    {
-        var now = DateTime.UtcNow;
-        var container = _cosmos.GetContainer("Senate", "Invites");
-        var invites = container.GetItemLinqQueryable<Invite>()
-            .Where(i => i.Id == inviteId
-                && i.Expiry > now
-                && !i.Redeemed);
-
-        if (!invites.Any()) { return Results.NotFound(); }
-
-        return Results.Ok(invites.First());
-    }
-
-    private static async Task<IResult> RedeemInvite(Guid inviteId, HttpContext ctx, CosmosClient _cosmos)
-    {
-        var now = DateTime.UtcNow;
-        var container = _cosmos.GetContainer("Senate", "Invites");
-        var invites = container.GetItemLinqQueryable<Invite>().Where(
-            i => i.Id.Equals(inviteId) 
-                && i.Expiry > now 
-                && !i.Redeemed);
-
-        if (!invites.Any()) { return Results.NotFound(); }
-
-        var existing = invites.First();
-        var updated = new Invite()
-        {
-            Id = existing.Id,
-            Email = existing.Email,
-            Expiry = existing.Expiry,
-            Redeemed = true,
-        };
-        var updateRes = await container.UpsertItemAsync(updated);
-        if (updateRes.StatusCode != System.Net.HttpStatusCode.OK) { return Results.BadRequest(); }
-
-        return Results.Ok();
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> CreateUser(
-        string email, 
-        string permission, 
-        HttpContext ctx, 
+        string email,
+        string permission,
+        IConfiguration _config,
+        HttpRequest req,
+        HttpContext ctx,
         CosmosClient _cosmos,
         GraphServiceClient _graph)
     {
         var scopes = new List<string>();
-        if (permission.Contains("read")) {  scopes.Add("Auth.Read"); }
-        if (permission.Contains("write")) {  scopes.Add("Auth.Write"); }
+        if (permission.Contains("read")) { scopes.Add("Auth.Read"); }
+        if (permission.Contains("write")) { scopes.Add("Auth.Write"); }
 
-        // Create user for supplied email address in B2C
-        var user = await GraphUserService.CreateUser(email, _graph);
-        if (user is null) { return Results.BadRequest("Failed to create graph user"); }   
+        // TODO: Deal with alrady existing user
+        var issuer = _config.GetSection("AzureAdB2C")["Domain"]!;
+        var user = await GraphUserService.CreateUser(email, issuer, _graph);
+        if (user is null) { return Results.BadRequest("Failed to create graph user"); }
 
         var authContainer = _cosmos.GetContainer("Senate", "Auth");
         var userAuth = new UserAuth()
@@ -148,32 +162,33 @@ public static class Auth
             Scopes = scopes
         };
 
-        var userAuthRes = await authContainer.CreateItemAsync(userAuth);
-        if (userAuthRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest("Failed to create user auth record"); }
-
-        Invite invite = new()
+        var auth = await authContainer.CreateItemAsync(userAuth);
+        if (auth.StatusCode != System.Net.HttpStatusCode.Created)
         {
-            Id = Guid.NewGuid(),
-            Email = email,
-            Expiry = DateTime.UtcNow.AddHours(48),
-            Redeemed = false
-        };
-
-        var container = _cosmos.GetContainer("Senate", "Invites");
-        var inviteRes = await container.CreateItemAsync(invite);
-        if (inviteRes.StatusCode != System.Net.HttpStatusCode.Created) { return Results.BadRequest("Failed to create invite"); }   
+            return Results.BadRequest("Failed to create user auth record");
+        }
 
         var returnUri = $"/user/{user.Id}";
 
-        var inviteRedeemUrl = $"https://yesehdevb2c.b2clogin.com/yesehdevb2c.onmicrosoft.com/oauth2/v2.0/authorize?p=B2C_1A_MAGICLINKSISU&client_id=bf050912-36cc-4ff6-9166-dad0068cea4e&nonce=defaultNonce&redirect_uri=https%3A%2F%2Fjwt.ms&scope=openid&response_type=id_token&prompt=login&invite_id={invite.Id}";
+        //var inviteRedeemUrl = $"https://yesehdevb2c.b2clogin.com/yesehdevb2c.onmicrosoft.com/oauth2/v2.0/authorize?p=B2C_1A_MAGICLINKSISU&client_id=bf050912-36cc-4ff6-9166-dad0068cea4e&nonce=defaultNonce&redirect_uri=https%3A%2F%2Fjwt.ms&scope=openid&response_type=id_token&prompt=login&invite_id={invite.Id}";
         var res = new CreateUserResponse()
         {
             User = user,
-            UserAuth = userAuthRes.Resource,
-            Invite = inviteRes.Resource,
-            InviteUrl = inviteRedeemUrl
+            UserAuth = auth.Resource,
         };
 
-        return Results.Created(returnUri, res);
+        try
+        {
+            var inviteResult = await CreateInviteLink(email, req, _config, ctx);
+            var mailClient = MailManager.GetClient(_config.GetValue<string>("SendgridAPIKey"));
+            await MailManager.SendInvitation(mailClient, email, inviteResult);
+
+            return Results.Ok();
+        }
+        catch (Exception ex) 
+        {
+            Console.WriteLine(ex.Message);
+            return Results.BadRequest("Failed to create invite link");
+        }
     }
 }

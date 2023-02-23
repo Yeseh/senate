@@ -1,41 +1,7 @@
 ﻿namespace Senate.Api;
 
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Graph;
 using Senate.Api.Helpers;
-
-public class UserModel : User
-{
-    [JsonPropertyName("password")]
-    public string Password { get; set; }
-
-    public void SetB2CProfile(string TenantName)
-    {
-        this.PasswordProfile = new PasswordProfile
-        {
-            ForceChangePasswordNextSignIn = false,
-            Password = this.Password,
-            ODataType = null
-        };
-        this.PasswordPolicies = "DisablePasswordExpiration,DisableStrongPassword";
-        this.Password = null;
-        this.ODataType = null;
-
-        foreach (var item in this.Identities)
-        {
-            if (item.SignInType == "emailAddress" || item.SignInType == "userName")
-            {
-                item.Issuer = TenantName;
-            }
-        }
-    }
-
-    public override string ToString()
-    {
-        return JsonSerializer.Serialize(this);
-    }
-}
 
 public class GraphUserService
 {
@@ -80,12 +46,32 @@ public class GraphUserService
         return result;
     }
 
-    public static async Task<User?> CreateUser(string email, GraphServiceClient graphClient)
+    // TODO: This is pretty naive
+    private static string GetUPNFromEmail(string email)
+    {
+        var pn = email.Replace("@", "_");
+        return $"{pn}@yesehdevb2c.onmicrosoft.com";
+    }
+
+    public static async Task<User?> CreateUser(string email, string issuer, GraphServiceClient graphClient)
     {
         var user = new User
         {
+            DisplayName = email,
             Mail = email,
+            UserPrincipalName = GetUPNFromEmail(email),
             PasswordPolicies = "DisablePasswordExpiration,DisableStrongPassword",
+            MailNickname = "Primary",
+            AccountEnabled = false,
+            Identities = new[]
+            {
+                new ObjectIdentity
+                {
+                    SignInType = "emailAddress",
+                    Issuer = issuer,
+                    IssuerAssignedId = email
+                }
+            },
             PasswordProfile = new PasswordProfile
             {
                 ForceChangePasswordNextSignIn = true,
@@ -108,7 +94,7 @@ public class GraphUserService
     {
         var result = await graphClient.Users
             .Request()
-            .Filter($"identities/any(c:c/email eq '{email}'")
+            .Filter($"mail eq '{email}'")
             .Select(e => new
             {
                 e.DisplayName,

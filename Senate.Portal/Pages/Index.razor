@@ -53,7 +53,7 @@ Welcome to your new app.
         try
         {
             var response = await _client!.PostAsync($"{_client.BaseAddress}auth/user?email={inviteUserModel.Email}&permission={inviteUserModel.Permission}", null);
-            inviteMessage = response.Content.ToString();
+            inviteMessage = await response.Content.ReadAsStringAsync();
         }
         catch (AccessTokenNotAvailableException ex)
         {
@@ -67,12 +67,12 @@ Welcome to your new app.
         try
         {
             _client = _clientFactory.CreateClient("SenateAPI");
-            var invitesResult = await _client!.GetAsync($"{_client.BaseAddress}auth/invites");
+            //var invitesResult = await _client!.GetAsync($"{_client.BaseAddress}auth/invites");
 
-            if (invitesResult.IsSuccessStatusCode)
-            {
-                activeInvites = JsonSerializer.Deserialize<List<InviteModel>>(invitesResult.Content.ReadAsStream());
-            }
+            //if (invitesResult.IsSuccessStatusCode)
+            //{
+            //    activeInvites = JsonSerializer.Deserialize<List<InviteModel>>(invitesResult.Content.ReadAsStream());
+            //}
         }
         catch (AccessTokenNotAvailableException ex)
         {
