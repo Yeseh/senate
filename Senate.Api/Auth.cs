@@ -37,10 +37,7 @@ public static class Auth
         app.MapGet(basePath + "/invite", RedeemInviteLink).WithOpenApi().AllowAnonymous();
     }
 
-    private static async Task<IResult> WelcomeUser(
-        string temporaryApiKey,
-        string email,
-        IConfiguration settings)
+    private static async Task<IResult> WelcomeUser(string email, IConfiguration settings)
     {
         var client = MailManager.GetClient(settings.GetValue<string>("AppSettings:SendgridAPIKey"));
         await MailManager.SendWelcome(client, email);
