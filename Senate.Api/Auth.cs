@@ -1,15 +1,10 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Graph;
 using Newtonsoft.Json;
 using System.Net;
-using System.Security.Cryptography;
-using System.Security.Policy;
 using System.Web;
 using LanguageExt;
-using LanguageExt.Common;
-using LanguageExt.Pipes;
 
 namespace Senate.Api;
 
@@ -43,11 +38,27 @@ public static class Auth
         app.MapPost(basePath + "/user", CreateUser).WithOpenApi().RequireAuthorization();
         app.MapGet(basePath + "/user/{oid}", GetUserByOid).WithOpenApi().RequireAuthorization();
         app.MapGet(basePath + "/user/{oid}/auth", GetUserAuth).WithOpenApi().RequireAuthorization();
+        app.MapGet(basePath + "/user/welcome", WelcomeUser).WithOpenApi().AllowAnonymous();
 
         // Invites
         //app.MapGet(basePath + "/invite", CreateInviteLink).WithOpenApi();
-        app.MapGet(basePath + "/invite", RedeemInviteLink).WithOpenApi();
+        app.MapGet(basePath + "/invite", RedeemInviteLink).WithOpenApi().AllowAnonymous();
     }
+
+    private static async Task<IResult> WelcomeUser(
+        string temporaryApiKey,
+        string email,
+        AppSettings settings)
+    {
+        // TODO: Haha security
+        var authorized = temporaryApiKey == settings.ApiKey;
+        if (!authorized) { return Results.Unauthorized();  }
+
+        var client = MailManager.GetClient(settings.SendgridApiKey);
+        await MailManager.SendWelcome(client, email);
+
+        return Results.Ok();
+     }
 
     private static IResult RedeemInviteLink(
         string token, 
@@ -75,8 +86,7 @@ public static class Auth
     private static async Task<string> CreateInviteLink(
         string email,
         HttpRequest req,
-        IConfiguration _config,
-        HttpContext context)
+        IConfiguration _config)
     {
         var b2cSection = _config.GetSection("AzureAdB2C");
 
@@ -114,7 +124,7 @@ public static class Auth
         return inviteUrl;
     }
 
-    private static IResult GetUserByOid([FromRoute] Guid oid, HttpContext ctx)
+    private static IResult GetUserByOid([FromRoute] Guid oid)
     {
         var isPresent = userDb.TryGetValue(oid, out var user); 
         if (!isPresent) { return Results.NotFound(); }
@@ -124,7 +134,6 @@ public static class Auth
 
     private static IResult GetUserAuth(
         [FromRoute] Guid oid, 
-        HttpContext ctx,
         CosmosClient _cosmos)
     {
         var container = _cosmos.GetContainer("Senate", "Auth");
@@ -141,11 +150,11 @@ public static class Auth
         string email,
         string permission,
         IConfiguration _config,
-        HttpRequest req,
         HttpContext ctx,
         CosmosClient _cosmos,
         GraphServiceClient _graph)
     {
+        var req = ctx.Request;
         var scopes = new List<string>();
         if (permission.Contains("read")) { scopes.Add("Auth.Read"); }
         if (permission.Contains("write")) { scopes.Add("Auth.Write"); }
@@ -163,23 +172,14 @@ public static class Auth
         };
 
         var auth = await authContainer.CreateItemAsync(userAuth);
-        if (auth.StatusCode != System.Net.HttpStatusCode.Created)
+        if (auth.StatusCode != HttpStatusCode.Created)
         {
             return Results.BadRequest("Failed to create user auth record");
         }
 
-        var returnUri = $"/user/{user.Id}";
-
-        //var inviteRedeemUrl = $"https://yesehdevb2c.b2clogin.com/yesehdevb2c.onmicrosoft.com/oauth2/v2.0/authorize?p=B2C_1A_MAGICLINKSISU&client_id=bf050912-36cc-4ff6-9166-dad0068cea4e&nonce=defaultNonce&redirect_uri=https%3A%2F%2Fjwt.ms&scope=openid&response_type=id_token&prompt=login&invite_id={invite.Id}";
-        var res = new CreateUserResponse()
-        {
-            User = user,
-            UserAuth = auth.Resource,
-        };
-
         try
         {
-            var inviteResult = await CreateInviteLink(email, req, _config, ctx);
+            var inviteResult = await CreateInviteLink(email, req, _config);
             var mailClient = MailManager.GetClient(_config.GetValue<string>("SendgridAPIKey"));
             await MailManager.SendInvitation(mailClient, email, inviteResult);
 
