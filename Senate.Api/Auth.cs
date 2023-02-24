@@ -94,14 +94,14 @@ public static class Auth
         using HttpClient client = new(handler);
         var res = await client.GetAsync(genUrl);
 
-        if (res.StatusCode != HttpStatusCode.Redirect) { throw ex; }
+        if (res.StatusCode != HttpStatusCode.Redirect) { throw new Exception("Failed to redirect to generation url"); }
 
         var contents = res.Content.ReadAsStringAsync();
         var location = res.Headers.Location.ToString();
         var expectedRedirect = $"{apiRedirect}/#id_token=";
         var isExpectedRedirect = location.StartsWith(expectedRedirect);
 
-        if (!isExpectedRedirect) { throw ex; }
+        if (!isExpectedRedirect) { throw new Exception($"Redirect {location} is not equal to {expectedRedirect}"); }
 
         var token = location.Substring(expectedRedirect.Length);
         var inviteUrl = $"{req.Scheme}://{req.Host}{req.PathBase.Value}/auth/invite?token={token}&email={email}";
@@ -180,8 +180,7 @@ public static class Auth
         }
         catch (Exception ex) 
         {
-            Console.WriteLine(ex.Message);
-            return Results.BadRequest("Failed to create invite link");
+            return Results.BadRequest("Failed to create invite link: " + ex.Message);
         }
     }
 }
