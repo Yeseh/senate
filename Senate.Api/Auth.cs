@@ -59,7 +59,7 @@ public static class Auth
         var tenantName = b2cSection.GetValue<string>("Domain");
         var clientId = b2cSection.GetValue<string>("ClientId");
         var hostName = b2cSection.GetValue<string>("Instance")!.Split("https://")[1];
-        var redirect = _config.GetValue<string>("AppSettings:ApiRedirectUri")!;
+        var redirect = _config.GetValue<string>("AppSettings:PortalRedirectUri")!;
 
         var redirectUri = HttpUtility.UrlEncode(redirect);
         var redeemUrl = string.Format("https://{0}/{1}/B2C_1A_RedeemInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
