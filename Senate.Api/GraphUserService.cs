@@ -81,7 +81,7 @@ public class GraphUserService
 
         // TODO: Just return existing user if it exists for now
         var existing = await GetUserByEmail(email, graphClient);
-        if (existing != null) { return user;  }
+        if (existing != null) { return existing;  }
 
         var result = await graphClient.Users
             .Request()

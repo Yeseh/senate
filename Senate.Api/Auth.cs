@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace Senate.Api;
 
-using static LanguageExt.Prelude;
+using WebApplication = Microsoft.AspNetCore.Builder.WebApplication;
 
 public record UserAuth
 {
@@ -20,20 +20,11 @@ public record UserAuth
     public List<string> Scopes { get; set; } = new();
 }
 
-public class CreateUserResponse
-{
-    public Microsoft.Graph.User User { get; set;  }
-
-    public UserAuth UserAuth { get; set; }
-
-    public string InviteUrl { get; set; }
-}
-
 public static class Auth
 {
     private readonly static Dictionary<Guid, Microsoft.Graph.User> userDb = new();
 
-    public static void MapAuthModule(this Microsoft.AspNetCore.Builder.WebApplication app, string basePath)
+    public static void MapAuthModule(this WebApplication app, string basePath)
     {
         // User
         app.MapPost(basePath + "/user", CreateUser).WithOpenApi().RequireAuthorization();
@@ -49,32 +40,28 @@ public static class Auth
     private static async Task<IResult> WelcomeUser(
         string temporaryApiKey,
         string email,
-        IOptions<AppSettings> settings)
+        IConfiguration settings)
     {
-        // TODO: Haha security
-        var authorized = temporaryApiKey == settings.Value.ApiKey;
-        if (!authorized) { return Results.Unauthorized();  }
-
-        var client = MailManager.GetClient(settings.Value.SendgridApiKey);
+        var client = MailManager.GetClient(settings.GetValue<string>("AppSettings:SendgridAPIKey"));
         await MailManager.SendWelcome(client, email);
 
         return Results.Ok();
-     }
+    }
 
     private static IResult RedeemInviteLink(
-        string token, 
-        string email, 
-        IConfiguration _config, 
+        string token,
+        string email,
+        IConfiguration _config,
         HttpContext context)
     {
-        var b2cSection = _config.GetSection("AzureAdB2C");
-
         var nonce = Guid.NewGuid().ToString("n");
-        var tenantName = b2cSection["Domain"];
-        var clientId = b2cSection["ClientId"];
-        var hostName = b2cSection["Instance"]!.Split("https://")[1];
-        
-        var redirectUri = HttpUtility.UrlEncode("https://jwt.ms");
+        var b2cSection = _config.GetSection("AzureAdB2C");
+        var tenantName = b2cSection.GetValue<string>("Domain");
+        var clientId = b2cSection.GetValue<string>("ClientId");
+        var hostName = b2cSection.GetValue<string>("Instance")!.Split("https://")[1];
+        var redirect = _config.GetValue<string>("AppSettings:ApiRedirectUri")!;
+
+        var redirectUri = HttpUtility.UrlEncode(redirect);
         var redeemUrl = string.Format("https://{0}/{1}/B2C_1A_RedeemInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
             + "&redirect_uri={4}&scope=openid&response_type=id_token&disable_cache=true&id_token_hint={5}"
             , hostName, tenantName, clientId, nonce, redirectUri, token);
@@ -86,18 +73,19 @@ public static class Auth
 
     private static async Task<string> CreateInviteLink(
         string email,
-        HttpRequest req,
-        IOptions<B2CSettings> options)
+        string domain,
+        string clientId,
+        string hostName,
+        string apiRedirect,
+        HttpRequest req)
     {
-        var b2cSettings = options.Value;
         var nonce = Guid.NewGuid().ToString("n");
-        var hostName = b2cSettings.Instance!.Split("https://")[1];
-        var redirectUri = HttpUtility.UrlEncode("https://jwt.ms");
+        var redirectUri = HttpUtility.UrlEncode(apiRedirect);
         var ex = new Exception("Failed to create invite token");
 
         string genUrl = string.Format("https://{0}/{1}/B2C_1A_GenerateInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
              + "&redirect_uri={4}&scope=openid&response_type=id_token&disable_cache=true&login_hint={5}"
-              , hostName, b2cSettings.Domain, b2cSettings.ClientId, nonce, redirectUri, email);
+              , hostName, domain, clientId, nonce, redirectUri, email);
 
         Console.WriteLine("Redirect: " + genUrl);
         HttpClientHandler handler = new();
@@ -110,7 +98,7 @@ public static class Auth
 
         var contents = res.Content.ReadAsStringAsync();
         var location = res.Headers.Location.ToString();
-        var expectedRedirect = "https://jwt.ms/#id_token=";
+        var expectedRedirect = $"{apiRedirect}/#id_token=";
         var isExpectedRedirect = location.StartsWith(expectedRedirect);
 
         if (!isExpectedRedirect) { throw ex; }
@@ -147,25 +135,32 @@ public static class Auth
     private static async Task<IResult> CreateUser(
         string email,
         string permission,
-        IOptions<B2CSettings> b2cSettings,
-        IOptions<AppSettings> appSettings,
         HttpContext ctx,
         CosmosClient _cosmos,
-        GraphServiceClient _graph)
+        GraphServiceClient _graph,
+        IConfiguration _config)
     {
+        var b2cSection = _config.GetSection("AzureAdB2C");
+        var tenantName = b2cSection.GetValue<string>("Domain")!;
+        var clientId = b2cSection.GetValue<string>("ClientId")!;
+        var hostName = b2cSection.GetValue<string>("Instance")!.Split("https://")[1];
+        var sendGridApiKey = _config.GetValue<string>("AppSettings:SendgridAPIKey")!;
+        var redirect = _config.GetValue<string>("AppSettings:ApiRedirectUri")!;
+
         var req = ctx.Request;
         var scopes = new List<string>();
         if (permission.Contains("read")) { scopes.Add("Auth.Read"); }
         if (permission.Contains("write")) { scopes.Add("Auth.Write"); }
 
         // TODO: Deal with alrady existing user
-        var user = await GraphUserService.CreateUser(email, b2cSettings.Value.Domain, _graph);
+        var user = await GraphUserService.CreateUser(email, tenantName, _graph);
         if (user is null) { return Results.BadRequest("Failed to create graph user"); }
 
         var authContainer = _cosmos.GetContainer("Senate", "Auth");
         var userAuth = new UserAuth()
         {
-            ObjectId = Guid.Parse(user.Id),
+            // TODO: Use user id, in cosmos: create if not exist
+            ObjectId = Guid.NewGuid(),
             Scopes = scopes
         };
 
@@ -177,8 +172,8 @@ public static class Auth
 
         try
         {
-            var inviteResult = await CreateInviteLink(email, req, b2cSettings);
-            var mailClient = MailManager.GetClient(appSettings.Value.SendgridApiKey);
+            var inviteResult = await CreateInviteLink(email, tenantName, clientId, hostName, redirect, req);
+            var mailClient = MailManager.GetClient(sendGridApiKey);
             await MailManager.SendInvitation(mailClient, email, inviteResult);
 
             return Results.Ok();
