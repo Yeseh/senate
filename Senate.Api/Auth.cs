@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 using System.Net;
 using System.Web;
 using LanguageExt;
+using Microsoft.Extensions.Options;
 
 namespace Senate.Api;
 
@@ -48,13 +49,13 @@ public static class Auth
     private static async Task<IResult> WelcomeUser(
         string temporaryApiKey,
         string email,
-        AppSettings settings)
+        IOptions<AppSettings> settings)
     {
         // TODO: Haha security
-        var authorized = temporaryApiKey == settings.ApiKey;
+        var authorized = temporaryApiKey == settings.Value.ApiKey;
         if (!authorized) { return Results.Unauthorized();  }
 
-        var client = MailManager.GetClient(settings.SendgridApiKey);
+        var client = MailManager.GetClient(settings.Value.SendgridApiKey);
         await MailManager.SendWelcome(client, email);
 
         return Results.Ok();
@@ -86,20 +87,17 @@ public static class Auth
     private static async Task<string> CreateInviteLink(
         string email,
         HttpRequest req,
-        IConfiguration _config)
+        IOptions<B2CSettings> options)
     {
-        var b2cSection = _config.GetSection("AzureAdB2C");
-
+        var b2cSettings = options.Value;
         var nonce = Guid.NewGuid().ToString("n");
-        var tenantName = b2cSection["Domain"];
-        var clientId = b2cSection["ClientId"];
-        var hostName = b2cSection["Instance"]!.Split("https://")[1];
+        var hostName = b2cSettings.Instance!.Split("https://")[1];
         var redirectUri = HttpUtility.UrlEncode("https://jwt.ms");
         var ex = new Exception("Failed to create invite token");
 
         string genUrl = string.Format("https://{0}/{1}/B2C_1A_GenerateInvite/oauth2/v2.0/authorize?client_id={2}&nonce={3}"
              + "&redirect_uri={4}&scope=openid&response_type=id_token&disable_cache=true&login_hint={5}"
-              , hostName, tenantName, clientId, nonce, redirectUri, email);
+              , hostName, b2cSettings.Domain, b2cSettings.ClientId, nonce, redirectUri, email);
 
         Console.WriteLine("Redirect: " + genUrl);
         HttpClientHandler handler = new();
@@ -149,7 +147,8 @@ public static class Auth
     private static async Task<IResult> CreateUser(
         string email,
         string permission,
-        IConfiguration _config,
+        IOptions<B2CSettings> b2cSettings,
+        IOptions<AppSettings> appSettings,
         HttpContext ctx,
         CosmosClient _cosmos,
         GraphServiceClient _graph)
@@ -160,8 +159,7 @@ public static class Auth
         if (permission.Contains("write")) { scopes.Add("Auth.Write"); }
 
         // TODO: Deal with alrady existing user
-        var issuer = _config.GetSection("AzureAdB2C")["Domain"]!;
-        var user = await GraphUserService.CreateUser(email, issuer, _graph);
+        var user = await GraphUserService.CreateUser(email, b2cSettings.Value.Domain, _graph);
         if (user is null) { return Results.BadRequest("Failed to create graph user"); }
 
         var authContainer = _cosmos.GetContainer("Senate", "Auth");
@@ -179,8 +177,8 @@ public static class Auth
 
         try
         {
-            var inviteResult = await CreateInviteLink(email, req, _config);
-            var mailClient = MailManager.GetClient(_config.GetValue<string>("SendgridAPIKey"));
+            var inviteResult = await CreateInviteLink(email, req, b2cSettings);
+            var mailClient = MailManager.GetClient(appSettings.Value.SendgridApiKey);
             await MailManager.SendInvitation(mailClient, email, inviteResult);
 
             return Results.Ok();

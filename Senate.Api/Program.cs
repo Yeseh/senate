@@ -37,7 +37,14 @@ builder.Services.AddSingleton(s =>
     return new CosmosClient(connString);
 });
 
-builder.Services.AddOptions<B2CSettings>().Bind(builder.Configuration.GetSection("AzureAdB2C"));
+builder.Services
+        .AddOptions<AppSettings>()
+        .Bind(builder.Configuration.GetSection("AppSettings"))
+        .ValidateDataAnnotations();
+builder.Services
+        .AddOptions<B2CSettings>()
+        .Bind(builder.Configuration.GetSection("AzureAdB2C"))
+        .ValidateDataAnnotations();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
