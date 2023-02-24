@@ -5,7 +5,6 @@ using Newtonsoft.Json;
 using System.Net;
 using System.Web;
 using LanguageExt;
-using Microsoft.Extensions.Options;
 
 namespace Senate.Api;
 
